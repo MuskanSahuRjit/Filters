@@ -1,0 +1,79 @@
+`timescale 1ns / 1ps
+
+module fir_lms_filter #(
+    parameter DATA_WIDTH = 16,
+    parameter COEFF_WIDTH = 16,
+    parameter TAP_NUM = 4,
+    parameter STEP_SIZE = 16'd4   // LMS step size (?)
+)(
+    input clk,
+    input reset,
+    input signed [DATA_WIDTH-1:0] x_in,   // Input sample
+    input signed [DATA_WIDTH-1:0] d_in,   // Desired signal
+    output reg signed [DATA_WIDTH-1:0] y_out, // Output
+
+    // Individual coefficient outputs
+    output signed [COEFF_WIDTH-1:0] coeff0,
+    output signed [COEFF_WIDTH-1:0] coeff1,
+    output signed [COEFF_WIDTH-1:0] coeff2,
+    output signed [COEFF_WIDTH-1:0] coeff3
+);
+
+    // Internal registers
+    reg signed [DATA_WIDTH-1:0] x_reg [0:TAP_NUM-1];  // Shift register
+    reg signed [COEFF_WIDTH-1:0] coeffs [0:TAP_NUM-1]; // Coefficients
+    wire signed [DATA_WIDTH+COEFF_WIDTH-1:0] products [0:TAP_NUM-1];
+    reg signed [DATA_WIDTH+COEFF_WIDTH-1:0] acc;
+    wire signed [DATA_WIDTH-1:0] error;
+
+    integer i;
+
+    // Input shift register
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            for (i = 0; i < TAP_NUM; i = i + 1)
+                x_reg[i] <= 0;
+        end else begin
+            for (i = TAP_NUM-1; i > 0; i = i - 1)
+                x_reg[i] <= x_reg[i-1];
+            x_reg[0] <= x_in;
+        end
+    end
+
+    // Multiply each tap
+    generate
+        genvar j;
+        for (j = 0; j < TAP_NUM; j = j + 1) begin : mac
+            assign products[j] = x_reg[j] * coeffs[j];
+        end
+    endgenerate
+
+    // Accumulate products for FIR output
+    always @(*) begin
+        acc = 0;
+        for (i = 0; i < TAP_NUM; i = i + 1)
+            acc = acc + products[i];
+        y_out = acc >>> COEFF_WIDTH;  // Scale back
+    end
+
+    assign error = d_in - y_out;
+
+    // LMS coefficient update
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            for (i = 0; i < TAP_NUM; i = i + 1)
+                coeffs[i] <= 0;
+        end else begin
+            for (i = 0; i < TAP_NUM; i = i + 1) begin
+                coeffs[i] <= coeffs[i] + ((STEP_SIZE * error * x_reg[i]) >>> (DATA_WIDTH));
+            end
+        end
+    end
+
+    // Map internal coeffs to outputs
+    assign coeff0 = coeffs[0];
+    assign coeff1 = coeffs[1];
+    assign coeff2 = coeffs[2];
+    assign coeff3 = coeffs[3];
+
+endmodule
